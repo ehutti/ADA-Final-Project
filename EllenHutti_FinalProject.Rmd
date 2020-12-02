@@ -1,0 +1,176 @@
+---
+title: "EllenHutti_FinalProject"
+author: "Ellen Hutti"
+date: "11/18/2020"
+output: html_document
+---
+
+## Library
+```{r}
+library(tidyverse)
+library(dplyr)
+library(haven)
+library(table1)
+library(odds.n.ends)
+library(survey)
+library(lmtest)
+library(aod)
+```
+
+## Load data
+```{r}
+NISTEEN <- read_csv("https://raw.githubusercontent.com/ehutti/ADA-Final-Project/main/NISTEEN18.csv")
+```
+
+## Check HPV vaccine variable
+```{r}
+# Check variable class
+class(NISTEEN$HPV_binary)
+table(NISTEEN$HPV_binary)
+
+# Make outcome variable
+NISTEEN <- NISTEEN %>% 
+  mutate(HPV_binary = 
+           case_when(HPVI_ANY %in% c("No") ~ 0, 
+                     HPVI_ANY %in% c("Yes") ~ 1),
+         HPV_binary = factor(HPV_binary, 0:1, c("No", "Yes")))
+```
+
+## Create table 1
+```{r}
+# Add labels to the variables
+label(NISTEEN$HPVI_ANY)<-"Received HPV vaccine"
+label(NISTEEN$HPVI_RECOM)<-"HPV vaccine recommended by doctor"
+label(NISTEEN$AGE)<-"Age in years"
+label(NISTEEN$CEN_REG)<-"Geographic region"
+label(NISTEEN$EDUC1)<-"Mother's education attainment"
+label(NISTEEN$RACEETHK)<-"Race or ethnicity"
+label(NISTEEN$SEX)<-"Sex"
+label(NISTEEN$FACILITY)<-"Type of healthcare facility"
+label(NISTEEN$INS_STAT2_I)<-"Type of insurance"
+label(NISTEEN$INCQ298A)<-"Income"
+
+# Create table 1
+table1(~AGE + SEX + RACEETHK + INCQ298A + INS_STAT2_I + EDUC1 | HPVI_ANY, NISTEEN)
+```
+
+## Construct complex survey design
+```{r}
+options( survey.lonely.psu = "adjust" )
+
+nis_design <- 
+    svydesign(
+        id = ~ SEQNUMT , 
+        strata = ~ STRATUM , 
+        weights = ~ RDDWT_C , 
+        data = subset( NISTEEN , RDDWT_C > 0 ) 
+    ) 
+```
+
+## Survey weighted univariate model
+# Mother's education
+```{r}
+educglm <- 
+    svyglm( 
+        HPV_binary ~ EDUC1 , 
+        nis_design ,
+        family=binomial()
+    )
+
+summary( educglm )
+
+OReduc<-exp(cbind(OR = coef(educglm), confint(educglm)))
+OReduc
+
+# Children of mother's with a high school diploma or equivalent are 0.77 (95% CI, 0.69-0.86) times as likely to receive the HPV vaccine compared to children of mother's with a college degree.
+# Children of mother's with less than a high school diploma or equivalent are 0.85 (95% CI, 0.74-0.97) times as likely to receive the HPV vaccine compared to children of mother's with a college degree.
+# Children of mother's with some college are 0.83 (95% CI, 0.75-0.91) times as likely to receive the HPV vaccine compared to children of mother's with a college degree.
+```
+
+# Insurance status
+```{r}
+insurglm <- 
+    svyglm( 
+        HPV_binary ~ INS_STAT2_I , 
+        nis_design ,
+        family=binomial()
+    )
+
+summary( educglm )
+
+ORinsur<-exp(cbind(OR = coef(insurglm), confint(insurglm)))
+ORinsur
+
+# Those with other insurance are 0.84 (95% CI, 0.69-1.03) times as likely to receive the HPV vaccine compared to those with Medicaid insurance.
+# Those with private insurance are 1.06 (95% CI, 0.93-1.20) times as likely to receive the HPV vaccine compared to those with Medicaid insurance.
+# Those with no insurance are 0.65 (95% CI, 0.50-0.86) times as likely to receive the HPV vaccine compared to those with Medicaid insurance.
+```
+
+## Survey weighted ultivariate models
+# Mother's education
+```{r}
+# Multivariate model for mother's education attainment adjusted for race or ethnicity. Race or ethnicity was chosen to adjust for based on the DAG created for this model. 
+adjeducglm <- 
+    svyglm( 
+        HPV_binary ~ EDUC1 + RACEETHK, 
+        nis_design ,
+        family=binomial()
+    )
+
+summary( adjeducglm )
+
+adjOReduc<-exp(cbind(OR = coef(adjeducglm), confint(adjeducglm)))
+adjOReduc
+
+# Children of mother's with a high school diploma or equivalent are 0.75 (95% CI, 0.67-0.84) times as likely to receive the HPV vaccine compared to children of mother's with a college degree after adjusting for race or ethnicity.
+# Children of mother's with less than a high school diploma or equivalent are 0.81 (95% CI, 0.70-0.94) times as likely to receive the HPV vaccine compared to children of mother's with a college degree after adjusting for race or ethnicity.
+# Children of mother's with some college are 0.82 (95% CI, 0.74-0.89) times as likely to receive the HPV vaccine compared to children of mother's with a college degree after adjusting for race or ethnicity.
+```
+
+# Insurance status
+```{r}
+# Multivariate model for insurance status adjusted for income, race or ethnicity, and mother's education attainment. Variables for adjustment were chosen based on the DAG created for this model. 
+adjinsurglm <- 
+    svyglm( 
+        HPV_binary ~ INS_STAT2_I + INCQ298A + RACEETHK + EDUC1, 
+        nis_design ,
+        family=binomial()
+    )
+
+summary( adjinsurglm )
+
+adjORinsur<-exp(cbind(OR = coef(adjinsurglm), confint(adjinsurglm)))
+adjORinsur
+
+# Those with other insurance are 0.86 (95% CI, 0.69-1.07) times as likely to receive the HPV vaccine compared to those with Medicaid insurance after adjusting for income, race, and mother's education attainment.
+# Those with private insurance are 1.04 (95% CI, 0.87-1.23) times as likely to receive the HPV vaccine compared to those with Medicaid insurance after adjusting for income, race, and mother's education attainment.
+# Those with no insurance are 0.72 (95% CI, 0.54-0.96) times as likely to receive the HPV vaccine compared to those with Medicaid insurance after adjusting for income, race, and mother's education attainment.
+```
+
+## Plot Cook’s Distance to assess influential observations
+``` {r}
+# Plot of Cook's distance to identify top 5 influential observations for adjusted education model
+plot(adjeducglm, which=4, id.n=5, col="red") 
+
+# Plot of Cook's distance to identify top 5 influential observations for adjusted insurance model
+plot(adjinsurglm, which=4, id.n=5, col="red") 
+
+# No concerning Cook's distances found for either model
+```
+
+## Test model significance
+# Education attainment model
+```{r}
+# Use Wald test to assess significance of mother's education attainment
+wald.test(b = coef(adjmineducglm), Sigma = vcov(adjmineducglm), Terms = 2:4)
+
+# Results of Wald test (X2=33.6, p<0.01) suggest that the overall model effects of mother's education attainment are statistically significant.
+```
+
+# Insurance status model
+```{r}
+# Use Wald test to assess significance of mother's education attainment
+wald.test(b = coef(adjinsurglm), Sigma = vcov(adjinsurglm), Terms = 2:4)
+
+# Results of Wald test (X2=8.2, p<0.05) suggest that the overall model effects of insurance status are statistically significant.
+```
